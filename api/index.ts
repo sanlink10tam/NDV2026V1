@@ -147,10 +147,18 @@ router.get("/data", async (req, res) => {
         warning: "Supabase chưa được cấu hình"
       });
     }
-    const { data: users } = await supabase.from('users').select('*');
-    const { data: loans } = await supabase.from('loans').select('*');
-    const { data: notifications } = await supabase.from('notifications').select('*');
-    const { data: config } = await supabase.from('config').select('*');
+    // Parallelize queries for better performance
+    const [
+      { data: users },
+      { data: loans },
+      { data: notifications },
+      { data: config }
+    ] = await Promise.all([
+      supabase.from('users').select('*'),
+      supabase.from('loans').select('*'),
+      supabase.from('notifications').select('*'),
+      supabase.from('config').select('*')
+    ]);
 
     const budget = config?.find(c => c.key === 'budget')?.value || 30000000;
     const rankProfit = config?.find(c => c.key === 'rankProfit')?.value || 0;
@@ -167,7 +175,13 @@ router.get("/data", async (req, res) => {
       monthlyStats
     };
 
-    const usage = getStorageUsage(payload);
+    // Only calculate storage usage if explicitly requested or periodically
+    // This avoids expensive JSON.stringify on every data fetch
+    let usage = 0;
+    if (req.query.checkStorage === 'true') {
+      usage = getStorageUsage(payload);
+    }
+    
     const isFull = usage > STORAGE_LIMIT_MB;
 
     // Run cleanup in background if usage is high

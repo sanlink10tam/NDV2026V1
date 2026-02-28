@@ -75,7 +75,7 @@ const App: React.FC = () => {
     return !!(u.bankName && u.bankAccountNumber && u.bankAccountHolder);
   };
 
-  const addNotification = (userId: string, title: string, message: string, type: 'LOAN' | 'RANK' | 'SYSTEM') => {
+  const addNotification = async (userId: string, title: string, message: string, type: 'LOAN' | 'RANK' | 'SYSTEM') => {
     const newNotif: Notification = {
       id: `NOTIF-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       userId,
@@ -85,13 +85,28 @@ const App: React.FC = () => {
       read: false,
       type
     };
-    setNotifications(prev => [newNotif, ...prev].slice(0, 50)); // Keep last 50
+    
+    const newNotifs = [newNotif, ...notifications].slice(0, 50);
+    setNotifications(newNotifs);
+
+    // Sync notification to server immediately
+    try {
+      await fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newNotifs)
+      });
+    } catch (e) {
+      console.error("Lỗi lưu thông báo:", e);
+    }
   };
 
   useEffect(() => {
     const fetchData = async (isInitial = false, retries = 3) => {
       try {
-        const response = await fetch('/api/data');
+        // Only check storage usage if user is admin to save resources
+        const url = user?.isAdmin ? '/api/data?checkStorage=true' : '/api/data';
+        const response = await fetch(url);
         if (!response.ok) {
           throw new Error(`Server returned ${response.status}: ${response.statusText}`);
         }
@@ -103,55 +118,25 @@ const App: React.FC = () => {
 
         const data = await response.json();
         
-        // Merge loans based on updatedAt to prevent race conditions
+        // Use functional updates and deep comparison to avoid unnecessary re-renders
         if (data.loans) {
           setLoans(prevLoans => {
-            const merged = [...prevLoans];
-            data.loans.forEach((incomingLoan: LoanRecord) => {
-              const idx = merged.findIndex(l => l.id === incomingLoan.id);
-              if (idx === -1) {
-                merged.push(incomingLoan);
-              } else {
-                const localLoan = merged[idx];
-                // Only update if incoming data is newer or different and we haven't updated locally recently
-                if ((incomingLoan.updatedAt || 0) >= (localLoan.updatedAt || 0)) {
-                  merged[idx] = incomingLoan;
-                }
-              }
-            });
-            // Also remove loans that are no longer in the server data (unless they were just created)
-            const finalLoans = merged.filter(l => 
-              data.loans.some((il: LoanRecord) => il.id === l.id) || 
-              (Date.now() - (l.updatedAt || 0) < 5000) // Keep recently updated loans even if not in poll yet
-            );
-            
-            if (JSON.stringify(finalLoans) !== JSON.stringify(prevLoans)) {
-              return finalLoans;
-            }
-            return prevLoans;
+            if (JSON.stringify(prevLoans) === JSON.stringify(data.loans)) return prevLoans;
+            return data.loans;
           });
         }
 
         if (data.users) {
           setRegisteredUsers(prevUsers => {
-            const merged = [...prevUsers];
-            data.users.forEach((incomingUser: User) => {
-              const idx = merged.findIndex(u => u.id === incomingUser.id);
-              if (idx === -1) {
-                merged.push(incomingUser);
-              } else {
-                const localUser = merged[idx];
-                if ((incomingUser.updatedAt || 0) >= (localUser.updatedAt || 0)) {
-                  merged[idx] = incomingUser;
-                }
-              }
-            });
-            
-            const finalUsers = merged.filter(u => data.users.some((iu: User) => iu.id === u.id));
-            if (JSON.stringify(finalUsers) !== JSON.stringify(prevUsers)) {
-              return finalUsers;
-            }
-            return prevUsers;
+            if (JSON.stringify(prevUsers) === JSON.stringify(data.users)) return prevUsers;
+            return data.users;
+          });
+        }
+
+        if (data.notifications) {
+          setNotifications(prev => {
+            if (JSON.stringify(prev) === JSON.stringify(data.notifications)) return prev;
+            return data.notifications;
           });
         }
 
@@ -347,37 +332,10 @@ const App: React.FC = () => {
     }
   }, [isInitialized, loans, registeredUsers]);
 
+  // Only persist current user session to localStorage
   useEffect(() => {
-    if (!isInitialized) return;
-    const persist = async () => {
-      localStorage.setItem('vnv_user', user ? JSON.stringify(user) : '');
-      
-      try {
-        const response = await fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            users: registeredUsers,
-            loans: loans,
-            notifications: notifications,
-            budget: systemBudget,
-            rankProfit: rankProfit,
-            loanProfit: loanProfit,
-            monthlyStats: monthlyStats
-          })
-        });
-        
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || `Server error: ${response.status}`);
-        }
-      } catch (e) {
-        console.error("Lỗi khi lưu dữ liệu lên server:", e);
-      }
-    };
-    const timer = setTimeout(persist, 2000);
-    return () => clearTimeout(timer);
-  }, [user, loans, registeredUsers, notifications, systemBudget, rankProfit, loanProfit, monthlyStats, isInitialized]);
+    localStorage.setItem('vnv_user', user ? JSON.stringify(user) : '');
+  }, [user]);
 
   const handleLogin = (phone: string, password?: string) => {
     setLoginError(null);
