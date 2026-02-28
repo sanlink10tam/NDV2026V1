@@ -472,6 +472,11 @@ const App: React.FC = () => {
         body: JSON.stringify(newRegisteredUsers)
       })
     ]).catch(e => console.error("Lỗi lưu khoản vay:", e));
+
+    // Chuyển sang Zalo nếu là khoản vay đầu tiên
+    if (nextSeq === 1) {
+      window.open('https://zalo.me/g/escncv086', '_blank');
+    }
   };
 
   const handleUpgradeRank = async (targetRank: UserRank, bill: string) => {
