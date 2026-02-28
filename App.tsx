@@ -438,27 +438,23 @@ const App: React.FC = () => {
     const newLoans = [newLoan, ...loans];
     const newRegisteredUsers = registeredUsers.map(u => u.id === user.id ? updatedUser : u);
 
-    // Persist immediately to prevent race condition with polling
-    try {
-      await Promise.all([
-        fetch('/api/loans', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newLoans)
-        }),
-        fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newRegisteredUsers)
-        })
-      ]);
-    } catch (e) {
-      console.error("Lỗi lưu khoản vay:", e);
-    }
-    
     setLoans(newLoans);
     setUser(updatedUser);
     setRegisteredUsers(newRegisteredUsers);
+
+    // Persist in background
+    Promise.all([
+      fetch('/api/loans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLoans)
+      }),
+      fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRegisteredUsers)
+      })
+    ]).catch(e => console.error("Lỗi lưu khoản vay:", e));
   };
 
   const handleUpgradeRank = async (targetRank: UserRank, bill: string) => {
@@ -466,18 +462,15 @@ const App: React.FC = () => {
     const updatedUser = { ...user, pendingUpgradeRank: targetRank, rankUpgradeBill: bill, updatedAt: Date.now() };
     const newRegisteredUsers = registeredUsers.map(u => u.id === user.id ? updatedUser : u);
     
-    try {
-      await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRegisteredUsers)
-      });
-    } catch (e) {
-      console.error("Lỗi nâng hạng:", e);
-    }
-
     setUser(updatedUser);
     setRegisteredUsers(newRegisteredUsers);
+
+    // Persist in background
+    fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newRegisteredUsers)
+    }).catch(e => console.error("Lỗi nâng hạng:", e));
   };
 
   const handleSettleLoan = async (loanId: string, bill: string) => {
@@ -486,17 +479,14 @@ const App: React.FC = () => {
       return loan;
     });
 
-    try {
-      await fetch('/api/loans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLoans)
-      });
-    } catch (e) {
-      console.error("Lỗi tất toán:", e);
-    }
-
     setLoans(newLoans);
+
+    // Persist in background
+    fetch('/api/loans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newLoans)
+    }).catch(e => console.error("Lỗi tất toán:", e));
   };
 
   const handleAdminLoanAction = async (loanId: string, action: 'APPROVE' | 'DISBURSE' | 'SETTLE' | 'REJECT', reason?: string) => {
@@ -568,29 +558,7 @@ const App: React.FC = () => {
     const updatedLoan = { ...loan, status: newStatus as any, rejectionReason, updatedAt: Date.now() };
     newLoans[loanIdx] = updatedLoan;
 
-    // Persist immediately
-    try {
-      await Promise.all([
-        fetch('/api/loans', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newLoans)
-        }),
-        usersUpdated ? fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newRegisteredUsers)
-        }) : Promise.resolve(),
-        fetch('/api/budget', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ budget: newBudget })
-        })
-      ]);
-    } catch (e) {
-      console.error("Lỗi lưu thay đổi khoản vay:", e);
-    }
-
+    // Optimistic UI Update
     setLoans(newLoans);
     setSystemBudget(newBudget);
     if (usersUpdated) {
@@ -600,6 +568,25 @@ const App: React.FC = () => {
         if (updatedMe) setUser(updatedMe);
       }
     }
+
+    // Persist in background
+    Promise.all([
+      fetch('/api/loans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLoans)
+      }),
+      usersUpdated ? fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRegisteredUsers)
+      }) : Promise.resolve(),
+      fetch('/api/budget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ budget: newBudget })
+      })
+    ]).catch(e => console.error("Lỗi lưu thay đổi khoản vay:", e));
 
     if (action === 'DISBURSE') {
       addNotification(loan.userId, 'Giải ngân thành công', `Khoản vay ID ${loan.id} đã được giải ngân vào tài khoản của bạn.`, 'LOAN');
@@ -678,27 +665,31 @@ const App: React.FC = () => {
       const upgradeFee = action === 'APPROVE_RANK' ? (updatedUser.totalLimit * 0.05) : 0;
       const newBudget = systemBudget + upgradeFee;
 
-      try {
-        await fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newUsers)
-        });
-
-        if (upgradeFee > 0) {
-          await fetch('/api/budget', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ budget: newBudget })
-          });
-        }
-      } catch (e) {
-        console.error("Lỗi lưu nâng hạng:", e);
-      }
-      
+      // Optimistic UI Update
       setRegisteredUsers(newUsers);
       if (user?.id === userId) setUser(updatedUser);
       if (upgradeFee > 0) setSystemBudget(newBudget);
+
+      // Persist in background
+      const persistTasks = [
+        fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newUsers)
+        })
+      ];
+
+      if (upgradeFee > 0) {
+        persistTasks.push(
+          fetch('/api/budget', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ budget: newBudget })
+          })
+        );
+      }
+
+      Promise.all(persistTasks).catch(e => console.error("Lỗi lưu nâng hạng:", e));
     }
   };
 
