@@ -96,6 +96,7 @@ const Register: React.FC<RegisterProps> = ({ onBack, onRegister, error }) => {
       fullName: formData.fullName,
       idNumber: formData.idNumber,
       address: formData.address,
+      password: formData.password,
       refZalo: formData.refZalo,
       relationship: formData.relationship,
       idFront: idFront!,

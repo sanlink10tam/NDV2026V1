@@ -36,6 +36,7 @@ export interface User {
   idBack?: string;
   refZalo?: string;
   relationship?: string;
+  password?: string;
   lastLoanSeq?: number; // Lưu số thứ tự khoản vay cuối cùng để tránh trùng mã khi xóa lịch sử
   // Bank account info
   bankName?: string;

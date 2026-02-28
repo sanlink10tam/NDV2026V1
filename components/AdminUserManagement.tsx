@@ -44,7 +44,7 @@ interface AdminUserManagementProps {
   onAction: (userId: string, action: 'APPROVE_RANK' | 'REJECT_RANK') => void;
   onLoanAction: (loanId: string, action: 'APPROVE' | 'DISBURSE' | 'SETTLE' | 'REJECT', reason?: string) => void;
   onDeleteUser: (userId: string) => void;
-  onAutoCleanup: () => number;
+  onAutoCleanup: () => Promise<number>;
   onBack: () => void;
 }
 
@@ -140,8 +140,8 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ users, loans,
     }
   };
 
-  const handleCleanupConfirm = () => {
-    const count = onAutoCleanup();
+  const handleCleanupConfirm = async () => {
+    const count = await onAutoCleanup();
     setCleanupResultCount(count);
     setShowCleanupConfirm(false);
   };

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
   "idBack" TEXT,
   "refZalo" TEXT,
   relationship TEXT,
+  password TEXT,
   "lastLoanSeq" INTEGER DEFAULT 0,
   "bankName" TEXT,
   "bankAccountNumber" TEXT,

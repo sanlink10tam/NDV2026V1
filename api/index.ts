@@ -160,9 +160,9 @@ router.get("/data", async (req, res) => {
       supabase.from('config').select('*')
     ]);
 
-    const budget = config?.find(c => c.key === 'budget')?.value || 30000000;
-    const rankProfit = config?.find(c => c.key === 'rankProfit')?.value || 0;
-    const loanProfit = config?.find(c => c.key === 'loanProfit')?.value || 0;
+    const budget = Number(config?.find(c => c.key === 'budget')?.value ?? 30000000);
+    const rankProfit = Number(config?.find(c => c.key === 'rankProfit')?.value ?? 0);
+    const loanProfit = Number(config?.find(c => c.key === 'loanProfit')?.value ?? 0);
     const monthlyStats = config?.find(c => c.key === 'monthlyStats')?.value || [];
 
     const payload = {

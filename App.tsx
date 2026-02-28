@@ -152,8 +152,10 @@ const App: React.FC = () => {
         if (data.loanProfit !== undefined && data.loanProfit !== loanProfit) {
           setLoanProfit(data.loanProfit);
         }
-        if (data.monthlyStats !== undefined && JSON.stringify(data.monthlyStats) !== JSON.stringify(monthlyStats)) {
-          setMonthlyStats(data.monthlyStats);
+        if (data.monthlyStats !== undefined) {
+          // Limit to 6 months and sort by date descending
+          const limitedStats = [...data.monthlyStats].slice(0, 6);
+          setMonthlyStats(limitedStats);
         }
         if (data.storageFull !== undefined) setStorageFull(data.storageFull);
         if (data.storageUsage !== undefined) setStorageUsage(data.storageUsage);
@@ -383,10 +385,23 @@ const App: React.FC = () => {
       lastLoanSeq: 0,
       updatedAt: Date.now()
     };
-    setRegisteredUsers(prev => [...prev, newUser]);
+    
+    const newUsers = [...registeredUsers, newUser];
+    setRegisteredUsers(newUsers);
     setUser(newUser);
     setCurrentView(AppView.DASHBOARD);
     setShowBankWarning(true);
+
+    // Persist to server immediately
+    try {
+      await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUsers)
+      });
+    } catch (e) {
+      console.error("Lỗi lưu đăng ký:", e);
+    }
   };
 
   const handleLogout = () => {
@@ -436,7 +451,9 @@ const App: React.FC = () => {
     };
 
     const newLoans = [newLoan, ...loans];
-    const newRegisteredUsers = registeredUsers.map(u => u.id === user.id ? updatedUser : u);
+    const newRegisteredUsers = registeredUsers.some(u => u.id === user.id)
+      ? registeredUsers.map(u => u.id === user.id ? updatedUser : u)
+      : [...registeredUsers, updatedUser];
 
     setLoans(newLoans);
     setUser(updatedUser);
@@ -460,7 +477,9 @@ const App: React.FC = () => {
   const handleUpgradeRank = async (targetRank: UserRank, bill: string) => {
     if (!user) return;
     const updatedUser = { ...user, pendingUpgradeRank: targetRank, rankUpgradeBill: bill, updatedAt: Date.now() };
-    const newRegisteredUsers = registeredUsers.map(u => u.id === user.id ? updatedUser : u);
+    const newRegisteredUsers = registeredUsers.some(u => u.id === user.id)
+      ? registeredUsers.map(u => u.id === user.id ? updatedUser : u)
+      : [...registeredUsers, updatedUser];
     
     setUser(updatedUser);
     setRegisteredUsers(newRegisteredUsers);
@@ -549,7 +568,8 @@ const App: React.FC = () => {
           stat.totalProfit = stat.rankProfit + stat.loanProfit;
           newStats[existingIdx] = stat;
         } else {
-          newStats = [{ month: monthKey, rankProfit: 0, loanProfit: profit, totalProfit: profit }, ...newStats].slice(0, 12);
+          // Add new month and keep only last 6
+          newStats = [{ month: monthKey, rankProfit: 0, loanProfit: profit, totalProfit: profit }, ...newStats].slice(0, 6);
         }
         return newStats;
       });
@@ -558,9 +578,34 @@ const App: React.FC = () => {
     const updatedLoan = { ...loan, status: newStatus as any, rejectionReason, updatedAt: Date.now() };
     newLoans[loanIdx] = updatedLoan;
 
+    // Calculate new stats for sync
+    let newRankProfit = rankProfit;
+    let newLoanProfit = loanProfit;
+    let newMonthlyStats = [...monthlyStats];
+
+    if (action === 'SETTLE') {
+      const profit = (loan.amount * 0.15) + (loan.fine || 0);
+      newLoanProfit += profit;
+      
+      const now = new Date();
+      const monthKey = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()}`;
+      const existingIdx = newMonthlyStats.findIndex(s => s.month === monthKey);
+      if (existingIdx !== -1) {
+        const stat = { ...newMonthlyStats[existingIdx] };
+        stat.loanProfit += profit;
+        stat.totalProfit = stat.rankProfit + stat.loanProfit;
+        newMonthlyStats[existingIdx] = stat;
+      } else {
+        newMonthlyStats = [{ month: monthKey, rankProfit: 0, loanProfit: profit, totalProfit: profit }, ...newMonthlyStats].slice(0, 6);
+      }
+    }
+
     // Optimistic UI Update
     setLoans(newLoans);
     setSystemBudget(newBudget);
+    setLoanProfit(newLoanProfit);
+    setMonthlyStats(newMonthlyStats);
+
     if (usersUpdated) {
       setRegisteredUsers(newRegisteredUsers);
       if (user && !user.isAdmin) {
@@ -570,23 +615,41 @@ const App: React.FC = () => {
     }
 
     // Persist in background
-    Promise.all([
+    const persistTasks = [
       fetch('/api/loans', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newLoans)
       }),
-      usersUpdated ? fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRegisteredUsers)
-      }) : Promise.resolve(),
       fetch('/api/budget', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ budget: newBudget })
       })
-    ]).catch(e => console.error("Lỗi lưu thay đổi khoản vay:", e));
+    ];
+
+    if (usersUpdated) {
+      persistTasks.push(fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRegisteredUsers)
+      }));
+    }
+
+    if (action === 'SETTLE') {
+      persistTasks.push(fetch('/api/loanProfit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loanProfit: newLoanProfit })
+      }));
+      persistTasks.push(fetch('/api/monthlyStats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ monthlyStats: newMonthlyStats })
+      }));
+    }
+
+    Promise.all(persistTasks).catch(e => console.error("Lỗi lưu thay đổi khoản vay:", e));
 
     if (action === 'DISBURSE') {
       addNotification(loan.userId, 'Giải ngân thành công', `Khoản vay ID ${loan.id} đã được giải ngân vào tài khoản của bạn.`, 'LOAN');
@@ -627,7 +690,8 @@ const App: React.FC = () => {
             stat.totalProfit = stat.rankProfit + stat.loanProfit;
             newStats[existingIdx] = stat;
           } else {
-            newStats = [{ month: monthKey, rankProfit: upgradeFee, loanProfit: 0, totalProfit: upgradeFee }, ...newStats].slice(0, 12);
+            // Add new month and keep only last 6
+            newStats = [{ month: monthKey, rankProfit: upgradeFee, loanProfit: 0, totalProfit: upgradeFee }, ...newStats].slice(0, 6);
           }
           return newStats;
         });
@@ -664,11 +728,33 @@ const App: React.FC = () => {
     if (updatedUser) {
       const upgradeFee = action === 'APPROVE_RANK' ? (updatedUser.totalLimit * 0.05) : 0;
       const newBudget = systemBudget + upgradeFee;
+      
+      let newRankProfit = rankProfit;
+      let newMonthlyStats = [...monthlyStats];
+
+      if (upgradeFee > 0) {
+        newRankProfit += upgradeFee;
+        const now = new Date();
+        const monthKey = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()}`;
+        const existingIdx = newMonthlyStats.findIndex(s => s.month === monthKey);
+        if (existingIdx !== -1) {
+          const stat = { ...newMonthlyStats[existingIdx] };
+          stat.rankProfit += upgradeFee;
+          stat.totalProfit = stat.rankProfit + stat.loanProfit;
+          newMonthlyStats[existingIdx] = stat;
+        } else {
+          newMonthlyStats = [{ month: monthKey, rankProfit: upgradeFee, loanProfit: 0, totalProfit: upgradeFee }, ...newMonthlyStats].slice(0, 6);
+        }
+      }
 
       // Optimistic UI Update
       setRegisteredUsers(newUsers);
       if (user?.id === userId) setUser(updatedUser);
-      if (upgradeFee > 0) setSystemBudget(newBudget);
+      if (upgradeFee > 0) {
+        setSystemBudget(newBudget);
+        setRankProfit(newRankProfit);
+        setMonthlyStats(newMonthlyStats);
+      }
 
       // Persist in background
       const persistTasks = [
@@ -685,6 +771,20 @@ const App: React.FC = () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ budget: newBudget })
+          })
+        );
+        persistTasks.push(
+          fetch('/api/rankProfit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rankProfit: newRankProfit })
+          })
+        );
+        persistTasks.push(
+          fetch('/api/monthlyStats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ monthlyStats: newMonthlyStats })
           })
         );
       }
@@ -730,13 +830,46 @@ const App: React.FC = () => {
   };
 
   const handleAutoCleanupUsers = async () => {
+    const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
     const usersToDelete = registeredUsers.filter(u => {
       if (u.isAdmin) return false;
+      
       const userLoans = loans.filter(l => l.userId === u.id);
-      if (userLoans.length === 0) return false;
-      const settled = userLoans.filter(l => l.status === 'ĐÃ TẤT TOÁN');
-      if (settled.length === 0) return false;
-      return true; 
+      
+      // Check if user has any active/pending loans
+      const hasActiveLoans = userLoans.some(l => 
+        !['ĐÃ TẤT TOÁN', 'BỊ TỪ CHỐI'].includes(l.status)
+      );
+      
+      if (hasActiveLoans) return false;
+
+      // Find the latest activity timestamp for this user
+      let lastActivity = u.updatedAt || 0;
+      userLoans.forEach(l => {
+        if (l.updatedAt && l.updatedAt > lastActivity) {
+          lastActivity = l.updatedAt;
+        }
+      });
+
+      // If no activity recorded at all (shouldn't happen with updatedAt), use joinDate as fallback
+      if (lastActivity === 0 && u.joinDate) {
+        try {
+          // joinDate format: "HH:mm:ss DD/MM/YYYY"
+          const parts = u.joinDate.split(' ');
+          if (parts.length === 2) {
+            const [d, m, y] = parts[1].split('/').map(Number);
+            const [h, min, s] = parts[0].split(':').map(Number);
+            lastActivity = new Date(y, m - 1, d, h, min, s).getTime();
+          }
+        } catch (e) {
+          lastActivity = 0;
+        }
+      }
+
+      // Only delete if inactive for more than 60 days
+      return (now - lastActivity) > SIXTY_DAYS_MS;
     });
     
     for (const u of usersToDelete) {
@@ -792,7 +925,14 @@ const App: React.FC = () => {
               setCurrentView(AppView.APPLY_LOAN);
             }}
             onMarkNotificationRead={(id) => {
-              setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+              const updatedNotifs = notifications.map(n => n.id === id ? { ...n, read: true } : n);
+              setNotifications(updatedNotifs);
+              // Persist immediately
+              fetch('/api/notifications', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updatedNotifs)
+              }).catch(e => console.error("Lỗi lưu trạng thái thông báo:", e));
             }}
             onMarkAllNotificationsRead={() => {
               if (user) {
@@ -835,25 +975,59 @@ const App: React.FC = () => {
             onUpdateBank={(bankData) => {
               if (user) {
                 const updatedUser = { ...user, ...bankData, updatedAt: Date.now() };
+                const newUsers = registeredUsers.map(u => u.id === user.id ? updatedUser : u);
                 setUser(updatedUser);
-                setRegisteredUsers(prev => prev.map(u => u.id === user.id ? updatedUser : u));
+                setRegisteredUsers(newUsers);
                 addNotification(user.id, 'Cập nhật tài khoản', 'Thông tin tài khoản nhận tiền của bạn đã được cập nhật.', 'SYSTEM');
                 setShowBankWarning(false);
+                
+                // Persist to server
+                fetch('/api/users', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(newUsers)
+                }).catch(e => console.error("Lỗi lưu tài khoản ngân hàng:", e));
               }
             }}
             onUpdateProfile={(userData) => {
               if (user) {
                 const updatedUser = { ...user, ...userData, updatedAt: Date.now() };
+                const newUsers = registeredUsers.map(u => u.id === user.id ? updatedUser : u);
                 setUser(updatedUser);
-                setRegisteredUsers(prev => prev.map(u => u.id === user.id ? updatedUser : u));
+                setRegisteredUsers(newUsers);
                 addNotification(user.id, 'Cập nhật thông tin', 'Thông tin cá nhân của bạn đã được cập nhật thành công.', 'SYSTEM');
+
+                // Persist to server
+                fetch('/api/users', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(newUsers)
+                }).catch(e => console.error("Lỗi lưu hồ sơ:", e));
               }
             }}
           />
         );
       case AppView.ADMIN_DASHBOARD: return <AdminDashboard user={user} loans={loans} registeredUsersCount={registeredUsers.length} systemBudget={systemBudget} rankProfit={rankProfit} loanProfit={loanProfit} monthlyStats={monthlyStats} onResetRankProfit={handleResetRankProfit} onResetLoanProfit={handleResetLoanProfit} onLogout={handleLogout} />;
       case AppView.ADMIN_USERS: return <AdminUserManagement users={registeredUsers} loans={loans} onAction={handleAdminUserAction} onLoanAction={handleAdminLoanAction} onDeleteUser={handleDeleteUser} onAutoCleanup={handleAutoCleanupUsers} onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} />;
-      case AppView.ADMIN_BUDGET: return <AdminBudget currentBudget={systemBudget} onUpdate={(val) => setSystemBudget(val)} onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} />;
+      case AppView.ADMIN_BUDGET: 
+        return (
+          <AdminBudget 
+            currentBudget={systemBudget} 
+            onUpdate={async (val) => {
+              setSystemBudget(val);
+              try {
+                await fetch('/api/budget', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ budget: val })
+                });
+              } catch (e) {
+                console.error("Lỗi cập nhật ngân sách:", e);
+              }
+            }} 
+            onBack={() => setCurrentView(AppView.ADMIN_DASHBOARD)} 
+          />
+        );
       default: return <Dashboard user={user} loans={loans} systemBudget={systemBudget} onApply={() => setCurrentView(AppView.APPLY_LOAN)} onLogout={handleLogout} onViewAllLoans={() => setCurrentView(AppView.APPLY_LOAN)} />;
     }
   };
