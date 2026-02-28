@@ -5,11 +5,23 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
 
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error("CRITICAL ERROR: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing from environment variables.");
+const isValidUrl = (url: string) => {
+  if (!url) return false;
+  try {
+    new URL(url);
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+
+if (!SUPABASE_URL || !SUPABASE_KEY || !isValidUrl(SUPABASE_URL)) {
+  console.error("CRITICAL ERROR: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing or invalid.");
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = (SUPABASE_URL && SUPABASE_KEY && isValidUrl(SUPABASE_URL)) 
+  ? createClient(SUPABASE_URL, SUPABASE_KEY)
+  : null;
 
 const STORAGE_LIMIT_MB = 45; // Virtual limit for demo purposes
 
@@ -96,10 +108,10 @@ const autoCleanupStorage = async () => {
 // Supabase Status check for Admin
 router.get("/supabase-status", async (req, res) => {
   try {
-    if (!SUPABASE_URL || !SUPABASE_KEY) {
+    if (!supabase) {
       return res.json({ 
         connected: false, 
-        error: "Thiếu cấu hình SUPABASE_URL hoặc SUPABASE_SERVICE_ROLE_KEY" 
+        error: "Chưa cấu hình Supabase hoặc URL không hợp lệ. Vui lòng kiểm tra biến môi trường." 
       });
     }
     
@@ -121,6 +133,20 @@ router.get("/supabase-status", async (req, res) => {
 // API Routes
 router.get("/data", async (req, res) => {
   try {
+    if (!supabase) {
+      return res.json({
+        users: [],
+        loans: [],
+        notifications: [],
+        budget: 30000000,
+        rankProfit: 0,
+        loanProfit: 0,
+        monthlyStats: [],
+        storageFull: false,
+        storageUsage: "0.00",
+        warning: "Supabase chưa được cấu hình"
+      });
+    }
     const { data: users } = await supabase.from('users').select('*');
     const { data: loans } = await supabase.from('loans').select('*');
     const { data: notifications } = await supabase.from('notifications').select('*');
@@ -162,6 +188,7 @@ router.get("/data", async (req, res) => {
 
 router.post("/users", async (req, res) => {
   try {
+    if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
     const incomingUsers = req.body;
     if (!Array.isArray(incomingUsers)) {
       return res.status(400).json({ error: "Dữ liệu phải là mảng" });
@@ -180,6 +207,7 @@ router.post("/users", async (req, res) => {
 
 router.post("/loans", async (req, res) => {
   try {
+    if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
     const incomingLoans = req.body;
     if (!Array.isArray(incomingLoans)) {
       return res.status(400).json({ error: "Dữ liệu phải là mảng" });
@@ -198,6 +226,7 @@ router.post("/loans", async (req, res) => {
 
 router.post("/notifications", async (req, res) => {
   try {
+    if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
     const incomingNotifs = req.body;
     if (!Array.isArray(incomingNotifs)) {
       return res.status(400).json({ error: "Dữ liệu phải là mảng" });
@@ -268,6 +297,7 @@ router.delete("/users/:id", async (req, res) => {
 
 router.post("/sync", async (req, res) => {
   try {
+    if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
     const { users, loans, notifications, budget, rankProfit, loanProfit, monthlyStats } = req.body;
     
     const tasks = [];
@@ -320,4 +350,9 @@ router.use((req, res) => {
   res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
 });
 
-export default router;
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+app.use("/api", router);
+
+export default app;

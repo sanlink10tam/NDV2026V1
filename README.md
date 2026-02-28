@@ -1,20 +1,27 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# NDV Money - Architecture
 
-# Run and deploy your AI Studio app
+This application follows the standard modern web architecture:
 
-This contains everything you need to run your app locally.
+## 1. Frontend (Vercel)
+- **Framework**: React 18+ with Vite
+- **Styling**: Tailwind CSS 4.0
+- **Deployment**: Deployed as a static Single Page Application (SPA) on Vercel.
+- **Routing**: Client-side routing with fallback to `index.html`.
 
-View your app in AI Studio: https://ai.studio/apps/2306a269-3fb8-4f15-840e-95b139da21aa
+## 2. Backend / Serverless (Vercel)
+- **Framework**: Express.js
+- **Runtime**: Node.js Serverless Functions
+- **Entry Point**: `/api/index.ts`
+- **Integration**: The Express app is decoupled and exported as a standalone module, allowing it to run both as a serverless function on Vercel and as a traditional Express server locally.
 
-## Run Locally
+## 3. Database (Supabase)
+- **Provider**: Supabase (PostgreSQL)
+- **Integration**: Connected via `@supabase/supabase-js` in the backend layer.
+- **Security**: Service Role Key used server-side for secure data operations.
 
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Local Development
+Run the unified server:
+```bash
+npm run dev
+```
+This starts the Express server which proxies Vite for the frontend and handles API requests.

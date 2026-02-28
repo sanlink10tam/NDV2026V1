@@ -377,7 +377,7 @@ const App: React.FC = () => {
     };
     const timer = setTimeout(persist, 2000);
     return () => clearTimeout(timer);
-  }, [user, loans, registeredUsers, notifications, systemBudget, rankProfit, loanProfit, isInitialized]);
+  }, [user, loans, registeredUsers, notifications, systemBudget, rankProfit, loanProfit, monthlyStats, isInitialized]);
 
   const handleLogin = (phone: string, password?: string) => {
     setLoginError(null);

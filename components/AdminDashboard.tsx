@@ -57,10 +57,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsCheckingDb(true);
     try {
       const response = await fetch('/api/supabase-status');
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        throw new Error(`Server không trả về JSON (Content-Type: ${contentType}). Nội dung: ${text.substring(0, 50)}...`);
+      }
+
       const data = await response.json();
       setDbStatus(data);
     } catch (e: any) {
-      setDbStatus({ connected: false, error: `Lỗi kết nối API: ${e.message}` });
+      console.error("Database status check error:", e);
+      setDbStatus({ connected: false, error: `Lỗi kết nối API: ${e.message || 'Lỗi không xác định'}` });
     } finally {
       setIsCheckingDb(false);
     }
